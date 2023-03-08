@@ -13,3 +13,5 @@ A Discord bot built in Python using OpenAI's API. It responds to user prompts to
   - python-dotenv
   - discord.py
   - openai
+  - OpenAI API key
+  - Discord bot key
