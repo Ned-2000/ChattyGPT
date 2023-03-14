@@ -20,6 +20,8 @@ class Img(commands.Cog):
         print("\nAuthor: " + str(ctx.author))
         print("\nimage prompt: " + str(ctx.message.content))
         
+        response_message = await ctx.reply("Generating image...")
+        
         try:
             response = openai.Image.create(
             prompt=ctx.message.content.replace("!image", ""),
@@ -27,7 +29,7 @@ class Img(commands.Cog):
             size="1024x1024"
             )
             image_url = response['data'][0]['url']
-            await ctx.reply(content="Here's your generated image link! It will last for one hour before expiry!\n" + str(image_url),delete_after=3600)
+            await response_message.edit(content="Here's your generated image link! It will last for one hour before expiry!\n" + str(image_url),delete_after=3600)
             print("\nimage generated:\n\n" + str(image_url))
                 
         except openai.error.OpenAIError as e:
