@@ -14,74 +14,60 @@ class Gen(commands.Cog):
     @commands.command()
     async def prompt(self, ctx):
     
-        if ctx.message.content.replace("!prompt", "") == "":
+        prompt_text = ctx.message.content.replace("!prompt", "")
+    
+        if not prompt_text:
             await ctx.reply("The '!prompt' command is used for text generation.")
             return
         
-        full_message = "" #contains full text
-        curr_message = "" #current text of the current message
-        final_response = ""
-        curr_response = None #the current discord message
-        completions = [] #list representation of the total completions
-        curr_completions = [] #current message list representation of completions
-        print("\nAuthor: " + str(ctx.author))
-        print("\nMessage prompt: " + str(ctx.message.content))
+        all_messages = [] #list representation of the total completions
+        curr_messages = [] #current message list representation of completions
+        print(f"\nAuthor: {ctx.author}")
+        print(f"\nMessage prompt: {ctx.message.content}")
 
         try:
-            while full_message == "": # get first response, wait while doing so
-                p = ctx.message.content.replace("!prompt", "")
-                response = await exponential_wait(ctx, p)
-                full_message = response.choices[0].text
-                if full_message != "":
-                    break
-                    
-            if ctx.message.content and (full_message != ""):
-                curr_response = await ctx.reply(full_message)
+            response = await exponential_wait(ctx, prompt_text)
+            full_message = response.choices[0].text
             
-            completions.append(response.choices[0].text)
-            curr_completions.append(response.choices[0].text)
+            all_messages.append(full_message)
+            curr_messages.append(full_message)
+            print(full_message)
+            
+            response_message = await ctx.reply(full_message)
+            
+            # Define prompt for continued messages
+            curr_prompt = prompt_text + full_message
+            curr_message = full_message
             
             while ("<EOP>" not in full_message) and ("<EOL>" not in full_message):
-                curr_prompt = ctx.message.content.replace("!prompt", "") + full_message
                 response = await exponential_wait(ctx, curr_prompt)
                 
-                if response.choices[0].text == "":
+                if not response.choices[0].text:
                     break
-                    
-                if len(str(curr_message + response.choices[0].text)) > 2000 or (len("".join(curr_completions)) > 2000):
-                    curr_message = "".join(curr_completions)
-                    curr_message = curr_message[:2000]
-                    await curr_response.edit(content=curr_message)
-                    curr_completions = []
-                    curr_message = response.choices[0].text
-                    temp_response = await curr_response.reply(curr_message)
-                    curr_response = temp_response
-                    
-                else:
-                    curr_message = curr_message + response.choices[0].text
-                    
-                curr_completions.append(response.choices[0].text)
-                completions.append(response.choices[0].text)
-                full_message = full_message + response.choices[0].text
                 
-                if ctx.message.content and (curr_message != "") and (len("".join(curr_completions)) < 2000):
-                    await curr_response.edit(content="".join(curr_completions))
+                new_message = response.choices[0].text
+                print(str(new_message))
+                
+                curr_message, response_message = handle_character_limit(curr_message, new_message, response_message, curr_messages, all_messages)
+                    
+                curr_messages.append(new_message)
+                all_messages.append(new_message)
+                full_message = full_message + new_message
+                
+                # If the message length is below the limit, update the current message
+                if curr_message and (len(curr_messages) < 2000):
+                    await response_message.edit(content="".join(curr_messages))
 
         except Exception as e:
             print(e)
-            if curr_response:
-                await curr_response.edit(content=e)
-            final_response = "".join(completions)
-            error_response = await ctx.reply("Sorry, I could not finish your prompt due to this error:\n\n" + str(e)) 
-            print(str(e))
+            error_message = "Sorry, an unexpected error occurred while processing your prompt:\n\n" + str(e)
+            await send_error_message(ctx, error_message)
             
         finally:
-            curr_message = "".join(curr_completions)
+            curr_message = "".join(curr_messages)
             curr_message = curr_message[:2000]
-            final_response = "".join(completions)
-            print("\nFinal response:" + str(final_response))
-            if curr_response:
-                await curr_response.edit(content=curr_message)
+            if response_message:
+                await response_message.edit(content=curr_message)
 
 async def setup(bot):
     await bot.add_cog(Gen(bot))
@@ -128,3 +114,23 @@ async def exponential_wait(ctx, p):
                 
             except Exception as e:
                     raise e
+                    
+async def handle_character_limit(curr_message, new_message, response_message, curr_messages, all_messages):
+    """
+    Check if the length of the current message combined with the new message
+    exceeds the character limit for a message on Discord. If it does, send the
+    current message and start a new one.
+    """
+    if len(curr_message + new_message) > 2000:
+        # If the current message exceeds the limit, send it and reset the message
+        curr_message = curr_message[:2000]
+        await response_message.edit(content=curr_message)
+        all_messages.append(curr_message)
+        curr_messages = []
+        curr_message = new_message
+        new_response_message = await response_message.reply(curr_message)
+        response_message = new_response_message
+    else:
+        curr_message += new_message
+
+    return curr_message, response_message
