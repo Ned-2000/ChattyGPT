@@ -1,4 +1,4 @@
-import discord, openai, random, time, asyncio, aiohttp
+import discord, openai, os, random, time, asyncio, aiohttp, json
 from discord.ext import commands
 
 class Gen(commands.Cog):
@@ -6,6 +6,9 @@ class Gen(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        with open('config.json', 'r') as f:
+            config = json.load(f)
+            moderation = bool(config["moderation"])
                     
     @commands.Cog.listener()
     async def on_ready(self):
@@ -19,6 +22,14 @@ class Gen(commands.Cog):
         if not prompt_text:
             await ctx.reply("The '!prompt' command is used for text generation.")
             return
+        
+        # config JSON file dictates if the message will be moderated for inappropriate content
+        if moderation:
+            check_prompt = openai.Moderation.create(input=prompt_text)
+            
+            if check_prompt.flagged:
+                await ctx.reply("Sorry, your message has been flagged as inappropriate and cannot be processed.")
+                return
         
         all_messages = [] #list representation of the total completions
         curr_messages = [] #current message list representation of completions
