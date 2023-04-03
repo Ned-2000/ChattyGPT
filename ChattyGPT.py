@@ -6,28 +6,37 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.typing = True
 
-bot = commands.Bot(command_prefix="!", case_insensitive=True, intents=intents)
-bot.remove_command('help')
-
 load_dotenv()
 openai.api_key = os.getenv(str('OPENAI_TOKEN'))
 
-@bot.event
-async def on_ready():
-    start_date = str(datetime.datetime.now())
-    print('We have logged in as {0} at {1}'.format(bot.user, start_date))
-    await load_cogs(bot)
-    print("Bot extensions: " + str(bot.extensions))
+class ChattyGPT:
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.typing = True
+        
+        self.bot = commands.Bot(command_prefix="!", case_insensitive=True, intents=intents)
+        self.bot.remove_command('help')
+        discord.utils.setup_logging()
+        
+        self.bot.ChattyGPT = self
+        self.bot.on_ready = self.on_ready
 
-async def load_cogs(self):
-    for cogfile in os.listdir('./cogs'):
-        print("cogfile: " + str(cogfile))
+    async def on_ready(self):
+        start_date = str(datetime.datetime.now())
+        print('We have logged in as {0} at {1}'.format(self.bot.user, start_date))
+        await self.load_cogs()
+        print("Bot extensions: " + str(self.bot.extensions))
+
+    async def load_cogs(self):
+        for cogfile in os.listdir('./cogs'):
+            await self.load_cog(cogfile)
+                    
+    async def load_cog(self, cogfile):
         if cogfile.endswith('.py'):
-            try:
-                cogname = cogfile.replace(".py", "")
-                await self.load_extension(f'cogs.{cogname}')
-            except Exception as e:
-                print(f'{cogfile} could not be loaded')
-                raise e
-
-bot.run(os.getenv(str('DISCORD_TOKEN')))
+                try:
+                    cogname = cogfile.replace(".py", "")
+                    await self.bot.load_extension(f'cogs.{cogname}')
+                except Exception as e:
+                    print(f'{cogfile} could not be loaded')
+                    raise e
