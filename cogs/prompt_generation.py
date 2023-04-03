@@ -8,7 +8,7 @@ class Gen(commands.Cog):
         self.bot = bot
         with open('config.json', 'r') as f:
             config = json.load(f)
-            moderation = bool(config["moderation"])
+            self.moderation = bool(config["moderation"])
                     
     @commands.Cog.listener()
     async def on_ready(self):
@@ -18,14 +18,22 @@ class Gen(commands.Cog):
     async def prompt(self, ctx):
     
         prompt_text = ctx.message.content.replace("!prompt", "")
+        
+        await ctx.typing()
     
         if not prompt_text:
             await ctx.reply("The '!prompt' command is used for text generation.")
             return
         
         # config JSON file dictates if the message will be moderated for inappropriate content
-        if moderation:
-            check_prompt = openai.Moderation.create(input=prompt_text)
+        if self.moderation:
+            try:
+                check_prompt = openai.Moderation.create(input=prompt_text)
+                
+            except Exception as e:
+                print(e)
+                error_response = await ctx.reply("Sorry, an unexpected error occurred while processing your prompt:\n\n" + str(e)) 
+                return
             
             if check_prompt.flagged:
                 await ctx.reply("Sorry, your message has been flagged as inappropriate and cannot be processed.")
