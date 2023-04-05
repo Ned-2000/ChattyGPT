@@ -26,7 +26,6 @@ class ChattyGPT:
         start_date = str(datetime.datetime.now())
         print('We have logged in as {0} at {1}'.format(self.bot.user, start_date))
         await self.load_cogs()
-        print("Bot extensions: " + str(self.bot.extensions))
 
     async def load_cogs(self):
         for cogfile in os.listdir('./cogs'):
