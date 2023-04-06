@@ -1,5 +1,6 @@
 import discord, openai, os, random, time, asyncio, aiohttp, json
 from discord.ext import commands
+from discord.ext.commands import BucketType, cooldown
 
 class Gen(commands.Cog):
     """ Prompt generation using OpenAI, replies to user command, edits reply live """
@@ -15,9 +16,10 @@ class Gen(commands.Cog):
         print('prompt_generation.py online.')
     
     @commands.command()
+    @cooldown(1, 10, BucketType.user)
     async def prompt(self, ctx):
     
-        prompt_text = ctx.message.content.replace("!prompt", "")
+        prompt_text = ctx.message.content[8:]
         
         await ctx.typing()
     
