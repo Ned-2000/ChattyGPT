@@ -38,6 +38,46 @@ class Gen(commands.Cog):
             await users.update_one({"id": id}, {"$inc": {"token_usage": +tokens}})
     
     @commands.command()
+    @commands.is_owner()
+    @cooldown(1, 60, BucketType.user)
+    async def reset(self, ctx, member: discord.Member):
+        try:
+            target = await users.find_one({"id": member.id})
+            
+            if target is None:
+                await self.create_user(member.id)
+                target = await users.find_one({"id": member.id})
+                await ctx.reply(f"{member}'s token usage has been reset.")
+                return
+            
+            else:
+                await self.reset_user_tokens(member.id)
+                await ctx.reply(f"{member}'s token usage has been reset.")
+                
+        except Exception as e:
+            print(e)
+            error_response = await ctx.reply("Sorry, an unexpected error occurred while processing your request:\n\n" + str(e))
+    
+    @commands.command()
+    @cooldown(1, 5, BucketType.user)
+    async def tokens(self, ctx):
+        try:
+            user = await users.find_one({"id": ctx.author.id})
+            
+            if user is None:
+                await self.create_user(ctx.author.id)
+                user = await users.find_one({"id": ctx.author.id})
+            
+            tokens = user["token_usage"]
+            limit = user["token_limit"]
+            
+            await ctx.reply(f"You have used {tokens} tokens out of your {limit} limit.")
+        
+        except Exception as e:
+            print(e)
+            error_response = await ctx.reply("Sorry, an unexpected error occurred while processing your request:\n\n" + str(e))    
+    
+    @commands.command()
     @cooldown(1, 10, BucketType.user)
     async def prompt(self, ctx):
     
