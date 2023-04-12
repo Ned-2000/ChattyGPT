@@ -112,6 +112,13 @@ class Gen(commands.Cog):
         print(f"\nMessage prompt: {ctx.message.content}")
 
         try:
+            
+            user = await users.find_one({"id": ctx.author.id})
+            
+            if user is None:
+                await self.create_user(ctx.author.id)
+                user = await users.find_one({"id": ctx.author.id})
+            
             while ("<EOP>" not in curr_message) and ("<EOL>" not in curr_message):
                 async with aiohttp.ClientSession() as session:
                     response = await exponential_wait(ctx, prompt_text)
@@ -146,6 +153,8 @@ class Gen(commands.Cog):
             curr_message = curr_message[:2000]
             if response_message:
                 await response_message.edit(content=curr_message)
+            if all_messages:
+                await self.update_user_tokens(ctx.author.id, all_messages)                
 
 async def setup(bot):
     await bot.add_cog(Gen(bot))
