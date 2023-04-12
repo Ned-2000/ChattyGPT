@@ -1,15 +1,23 @@
-import discord, openai, os, random, time, asyncio, aiohttp, json
+import discord, openai, os, random, time, asyncio, aiohttp, json, motor.motor_asyncio, tiktoken
 from discord.ext import commands
 from discord.ext.commands import BucketType, cooldown
+
+with open('./config.json', 'r') as f:
+    config = json.load(f)
+
+mongo_url = config["mongo_url"]
+
+mclient = motor.motor_asyncio.AsyncIOMotorClient(mongo_url)
+users = mclient["chattygpt"]["users"]
+
+encoding = tiktoken.encoding_for_model("text-davinci-003")
 
 class Gen(commands.Cog):
     """ Prompt generation using OpenAI, replies to user command, edits reply live """
 
     def __init__(self, bot):
         self.bot = bot
-        with open('config.json', 'r') as f:
-            config = json.load(f)
-            self.moderation = bool(config["moderation"])
+        self.moderation = bool(config["moderation"])
                     
     @commands.Cog.listener()
     async def on_ready(self):
