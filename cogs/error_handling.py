@@ -34,8 +34,13 @@ class Errors(commands.Cog):
             await ctx.reply("You are currently missing the following permissions to use this command:\n" + perms)
             return
         
+        elif isinstance(error, commands.CommandNotFound):
+            print("Error: Command not found.")
+            return
+        
         else:
             print(f"Unhandled error in command {ctx.command}. Error: {error}")
+            await ctx.reply(error)
     
     @commands.Cog.listener()
     async def on_ready(self):
