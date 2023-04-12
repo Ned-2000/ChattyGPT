@@ -23,6 +23,20 @@ class Gen(commands.Cog):
     async def on_ready(self):
         print('prompt_generation.py online.')
     
+    async def create_user(self, id: int):
+        new_user = {"id": id, "token_limit": 8000, "token_usage": 0}
+        await users.insert_one(new_user)
+    
+    async def reset_user_tokens(self, id: int):
+        if id is not None:
+            await users.update_one({"id": id}, {"$set": {"token_usage": 0}})
+    
+    async def update_user_tokens(self, id: int, all_messages: list[str]):
+        if id is not None:
+            prompt_tokens = encoding.encode_batch(all_messages, allowed_special="all")
+            tokens = sum(len(token) for token in prompt_tokens)
+            await users.update_one({"id": id}, {"$inc": {"token_usage": +tokens}})
+    
     @commands.command()
     @cooldown(1, 10, BucketType.user)
     async def prompt(self, ctx):
