@@ -1,101 +1,177 @@
-import discord, openai, random, time, asyncio
+import discord, openai, os, random, time, asyncio, aiohttp, json, motor.motor_asyncio, tiktoken
 from discord.ext import commands
+from discord.ext.commands import BucketType, cooldown
+
+with open('./config.json', 'r') as f:
+    config = json.load(f)
+
+mongo_url = config["mongo_url"]
+
+mclient = motor.motor_asyncio.AsyncIOMotorClient(mongo_url)
+users = mclient["chattygpt"]["users"]
+
+encoding = tiktoken.encoding_for_model("text-davinci-003")
 
 class Gen(commands.Cog):
     """ Prompt generation using OpenAI, replies to user command, edits reply live """
 
     def __init__(self, bot):
         self.bot = bot
+        self.moderation = bool(config["moderation"])
                     
     @commands.Cog.listener()
     async def on_ready(self):
         print('prompt_generation.py online.')
     
+    async def create_user(self, id: int):
+        new_user = {"id": id, "token_limit": 8000, "token_usage": 0}
+        await users.insert_one(new_user)
+    
+    async def reset_user_tokens(self, id: int):
+        if id is not None:
+            await users.update_one({"id": id}, {"$set": {"token_usage": 0}})
+    
+    async def update_user_tokens(self, id: int, all_messages: list[str]):
+        if id is not None:
+            prompt_tokens = encoding.encode_batch(all_messages, allowed_special="all")
+            tokens = sum(len(token) for token in prompt_tokens)
+            await users.update_one({"id": id}, {"$inc": {"token_usage": +tokens}})
+    
     @commands.command()
+    @commands.is_owner()
+    @cooldown(1, 60, BucketType.user)
+    async def reset(self, ctx, member: discord.Member):
+        try:
+            target = await users.find_one({"id": member.id})
+            
+            if target is None:
+                await self.create_user(member.id)
+                target = await users.find_one({"id": member.id})
+                await ctx.reply(f"{member}'s token usage has been reset.")
+                return
+            
+            else:
+                await self.reset_user_tokens(member.id)
+                await ctx.reply(f"{member}'s token usage has been reset.")
+                
+        except Exception as e:
+            print(e)
+            error_response = await ctx.reply("Sorry, an unexpected error occurred while processing your request:\n\n" + str(e))
+    
+    @commands.command()
+    @cooldown(1, 5, BucketType.user)
+    async def tokens(self, ctx):
+        try:
+            user = await users.find_one({"id": ctx.author.id})
+            
+            if user is None:
+                await self.create_user(ctx.author.id)
+                user = await users.find_one({"id": ctx.author.id})
+            
+            tokens = user["token_usage"]
+            limit = user["token_limit"]
+            
+            await ctx.reply(f"You have used {tokens} tokens out of your {limit} limit.")
+        
+        except Exception as e:
+            print(e)
+            error_response = await ctx.reply("Sorry, an unexpected error occurred while processing your request:\n\n" + str(e))    
+    
+    @commands.command()
+    @cooldown(1, 10, BucketType.user)
     async def prompt(self, ctx):
     
-        if ctx.message.content.replace("!prompt", "") == "":
+        prompt_text = ctx.message.content[8:]
+        
+        await ctx.typing()
+    
+        if not prompt_text:
             await ctx.reply("The '!prompt' command is used for text generation.")
             return
         
-        full_message = "" #contains full text
-        curr_message = "" #current text of the current message
-        final_response = ""
-        curr_response = None #the current discord message
-        completions = [] #list representation of the total completions
-        curr_completions = [] #current message list representation of completions
-        print("\nAuthor: " + str(ctx.author))
-        print("\nMessage prompt: " + str(ctx.message.content))
+        # config JSON file dictates if the message will be moderated for inappropriate content
+        if self.moderation:
+            try:
+                check_prompt = openai.Moderation.create(input=prompt_text)
+                
+            except Exception as e:
+                print(e)
+                error_response = await ctx.reply("Sorry, an unexpected error occurred while processing your prompt:\n\n" + str(e)) 
+                return
+            
+            if check_prompt.flagged:
+                await ctx.reply("Sorry, your message has been flagged as inappropriate and cannot be processed.")
+                return
+        
+        all_messages = [] #list representation of the total completions
+        curr_messages = [] #current message list representation of completions
+        response_message = None
+        curr_message = ""
+        
+        print(f"\nAuthor: {ctx.author}")
+        print(f"\nMessage prompt: {ctx.message.content}")
 
         try:
-            while full_message == "": # get first response, wait while doing so
-                p = ctx.message.content.replace("!prompt", "")
-                response = await exponential_wait(ctx, p)
-                full_message = response.choices[0].text
-                if full_message != "":
-                    break
-                    
-            if ctx.message.content and (full_message != ""):
-                curr_response = await ctx.reply(full_message)
             
-            completions.append(response.choices[0].text)
-            curr_completions.append(response.choices[0].text)
+            user = await users.find_one({"id": ctx.author.id})
             
-            while ("<EOP>" not in full_message) and ("<EOL>" not in full_message):
-                curr_prompt = ctx.message.content.replace("!prompt", "") + full_message
-                response = await exponential_wait(ctx, curr_prompt)
+            if user is None:
+                await self.create_user(ctx.author.id)
+                user = await users.find_one({"id": ctx.author.id})
+            
+            while ("<EOP>" not in curr_message) and ("<EOL>" not in curr_message):
+                async with aiohttp.ClientSession() as session:
+                    response = await exponential_wait(ctx, prompt_text)
                 
-                if response.choices[0].text == "":
+                if not response.choices[0].text:
                     break
-                    
-                if len(str(curr_message + response.choices[0].text)) > 2000 or (len("".join(curr_completions)) > 2000):
-                    curr_message = "".join(curr_completions)
-                    curr_message = curr_message[:2000]
-                    await curr_response.edit(content=curr_message)
-                    curr_completions = []
-                    curr_message = response.choices[0].text
-                    temp_response = await curr_response.reply(curr_message)
-                    curr_response = temp_response
-                    
+                
+                new_message = response.choices[0].text.strip()
+                print(str(new_message))
+                
+                curr_message, response_message = handle_character_limit(curr_message, new_message, response_message, curr_messages, all_messages)
+                
+                curr_messages.append(new_message)
+                all_messages.append(new_message)
+                
+                if not response_message:
+                    response_message = await ctx.reply(new_message)
                 else:
-                    curr_message = curr_message + response.choices[0].text
-                    
-                curr_completions.append(response.choices[0].text)
-                completions.append(response.choices[0].text)
-                full_message = full_message + response.choices[0].text
+                    await response_message.edit(content=curr_message)
                 
-                if ctx.message.content and (curr_message != "") and (len("".join(curr_completions)) < 2000):
-                    await curr_response.edit(content="".join(curr_completions))
+                prompt_text = curr_message
+                
+                # If the message length is below the limit, update the current message
+                if curr_message and (len(curr_messages) < 2000):
+                    await response_message.edit(content="".join(curr_messages))
 
         except Exception as e:
             print(e)
-            if curr_response:
-                await curr_response.edit(content=e)
-            final_response = "".join(completions)
-            error_response = await ctx.reply("Sorry, I could not finish your prompt due to this error:\n\n" + str(e)) 
-            print(str(e))
+            error_response = await ctx.reply("Sorry, an unexpected error occurred while processing your prompt:\n\n" + str(e)) 
             
         finally:
-            curr_message = "".join(curr_completions)
             curr_message = curr_message[:2000]
-            final_response = "".join(completions)
-            print("\nFinal response:" + str(final_response))
-            if curr_response:
-                await curr_response.edit(content=curr_message)
+            if response_message:
+                await response_message.edit(content=curr_message)
+            if all_messages:
+                await self.update_user_tokens(ctx.author.id, all_messages)                
 
 async def setup(bot):
     await bot.add_cog(Gen(bot))
     print("prompt cog successfully loaded.")
 
-def generate_response(ctx, p):
+def generate_response(ctx, prompt_text):
     """
     Function which calls the OpenAI API completion function.
     Returns the next token generated by the API.
     """
-    return openai.Completion.create(
-                engine="text-davinci-003",
-                prompt=p,
-                temperature=1)
+    try:
+        return openai.Completion.create(
+            engine="text-davinci-003",
+            prompt=prompt_text,
+            temperature=1)
+    except Exception as e:
+        raise e
 
 async def exponential_wait(ctx, p):
         """
@@ -128,3 +204,23 @@ async def exponential_wait(ctx, p):
                 
             except Exception as e:
                     raise e
+                    
+async def handle_character_limit(curr_message, new_message, response_message, curr_messages, all_messages):
+    """
+    Check if the length of the current message combined with the new message
+    exceeds the character limit for a message on Discord. If it does, send the
+    current message and start a new one.
+    """
+    if len(curr_message + new_message) > 2000:
+        # If the current message exceeds the limit, send it and reset the message
+        curr_message = curr_message[:2000]
+        await response_message.edit(content=curr_message)
+        all_messages.append(curr_message)
+        curr_messages = []
+        curr_message = new_message
+        new_response_message = await response_message.reply(curr_message)
+        response_message = new_response_message
+    else:
+        curr_message += new_message
+
+    return curr_message, response_message
