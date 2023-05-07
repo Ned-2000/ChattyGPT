@@ -47,12 +47,15 @@ class Gen(commands.Cog):
             await users.update_one({"id": id}, {"$push": {"messages": encoded}})
     
     @commands.command()
-    @commands.is_owner()
     @cooldown(1, 60, BucketType.user)
     async def reset(self, ctx, member: discord.Member):
         
         if member.bot:
             await ctx.reply("Can't reset tokens of a bot.")
+            return
+        
+        if not ctx.author.guild_permissions.administrator:
+            await ctx.reply("Only server administrators can use this command.")
             return
         
         try:
