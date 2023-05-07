@@ -1,4 +1,4 @@
-import discord, openai, os, random, time, asyncio, aiohttp, json, motor.motor_asyncio, tiktoken
+import discord, openai, os, random, datetime, time, asyncio, aiohttp, json, motor.motor_asyncio, tiktoken
 from discord.ext import commands
 from discord.ext.commands import BucketType, cooldown
 
@@ -33,14 +33,28 @@ class Gen(commands.Cog):
     
     async def update_user_tokens(self, id: int, all_messages: list[str]):
         if id is not None:
-            prompt_tokens = encoding.encode_batch(all_messages, allowed_special="all")
-            tokens = sum(len(token) for token in prompt_tokens)
+            message_tokens = encoding.encode_batch(all_messages, allowed_special="all")
+            tokens = sum(len(token) for token in message_tokens)
             await users.update_one({"id": id}, {"$inc": {"token_usage": +tokens}})
+    
+    async def update_user_messages(self, id: int, prompt_text: str, all_messages: list[str]):
+        if id is not None:
+            date = str(datetime.datetime.now())
+            prompt_encoded = encoding.encode(prompt_text)
+            messages_encoded = encoding.encode_batch(all_messages, allowed_special="all")
+            flat_messages = [token for sublist in messages_encoded for token in sublist]
+            encoded = [date, prompt_encoded, flat_messages]
+            await users.update_one({"id": id}, {"$push": {"messages": encoded}})
     
     @commands.command()
     @commands.is_owner()
     @cooldown(1, 60, BucketType.user)
     async def reset(self, ctx, member: discord.Member):
+        
+        if member.bot:
+            await ctx.reply("Can't reset tokens of a bot.")
+            return
+        
         try:
             target = await users.find_one({"id": member.id})
             
@@ -96,11 +110,15 @@ class Gen(commands.Cog):
                 
             except Exception as e:
                 print(e)
-                error_response = await ctx.reply("Sorry, an unexpected error occurred while processing your prompt:\n\n" + str(e)) 
+                error_response = await ctx.reply("Sorry, an unexpected error occurred while processing your prompt:\n\n" + str(e))
+                error_string = "Sorry, an unexpected error occurred while processing your prompt:\n\n" + str(e)
+                await self.update_user_messages(ctx.author.id, prompt_text, [error_string])
                 return
             
             if check_prompt.flagged:
-                await ctx.reply("Sorry, your message has been flagged as inappropriate and cannot be processed.")
+                error_string = "Sorry, your message has been flagged as inappropriate and cannot be processed."
+                await ctx.reply(error_string)
+                await self.update_user_messages(ctx.author.id, prompt_text, [error_string])
                 return
         
         all_messages = [] #list representation of the total completions
@@ -147,14 +165,17 @@ class Gen(commands.Cog):
 
         except Exception as e:
             print(e)
-            error_response = await ctx.reply("Sorry, an unexpected error occurred while processing your prompt:\n\n" + str(e)) 
+            error_response = await ctx.reply("Sorry, an unexpected error occurred while processing your prompt:\n\n" + str(e))
+            error_string = "Sorry, an unexpected error occurred while processing your prompt: " + str(e)
+            all_messages.append(error_string)
             
         finally:
             curr_message = curr_message[:2000]
             if response_message:
                 await response_message.edit(content=curr_message)
             if all_messages:
-                await self.update_user_tokens(ctx.author.id, all_messages)                
+                await self.update_user_tokens(ctx.author.id, all_messages)
+                await self.update_user_messages(ctx.author.id, prompt_text, all_messages)
 
 async def setup(bot):
     await bot.add_cog(Gen(bot))
